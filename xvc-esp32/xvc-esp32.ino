@@ -27,7 +27,7 @@ static const char* MY_PASSPHRASE = "12345678"; // 例如 "12345678"
 // GND -> ESP32 GND
 // TCK -> ESP32 IO14
 // TMS -> ESP32 IO15
-// TDI -> ESP32      
+// TDI -> ESP32 IO12 
 // TDO -> ESP32 IO13
 static constexpr const int tck_gpio = 14; 
 static constexpr const int tms_gpio = 15; 
@@ -47,6 +47,10 @@ static constexpr const int tdo_gpio = 13;
 /* Transition delay coefficients */
 static const unsigned int jtag_delay = 10;
 
+// Forward declarations (required for non-Arduino IDE environments)
+static bool jtag_read(void);
+static void jtag_write(std::uint_fast8_t tck, std::uint_fast8_t tms, std::uint_fast8_t tdi);
+
 static std::uint32_t jtag_xfer(std::uint_fast8_t n, std::uint32_t tms, std::uint32_t tdi)
 {
     std::uint32_t tdo = 0;
@@ -57,11 +61,11 @@ static std::uint32_t jtag_xfer(std::uint_fast8_t n, std::uint32_t tms, std::uint
         asm volatile ("nop");
         asm volatile ("nop");
         jtag_write(1, tms & 1, tdi & 1);
-        for (std::uint32_t i = 0; i < jtag_delay; i++) asm volatile ("nop");
+        for (std::uint32_t d = 0; d < jtag_delay; d++) asm volatile ("nop");
         tdo >>= 1;
         tdo |= jtag_read() ? tdo_bit : 0;
         jtag_write(0, tms & 1, tdi & 1);
-        for (std::uint32_t i = 0; i < jtag_delay; i++) asm volatile ("nop");
+        for (std::uint32_t d = 0; d < jtag_delay; d++) asm volatile ("nop");
         tms >>= 1;
         tdi >>= 1;
     }
@@ -75,8 +79,8 @@ static bool jtag_read(void)
 
 static void jtag_write(std::uint_fast8_t tck, std::uint_fast8_t tms, std::uint_fast8_t tdi)
 {
-    const uint32_t set = tck<<tck_gpio | tms<<tms_gpio | tdi<<tdi_gpio;
-    const uint32_t clear = !tck<<tck_gpio | !tms<<tms_gpio | !tdi<<tdi_gpio;
+    const uint32_t set = (tck << tck_gpio) | (tms << tms_gpio) | (tdi << tdi_gpio);
+    const uint32_t clear = ((!tck) << tck_gpio) | ((!tms) << tms_gpio) | ((!tdi) << tdi_gpio);
 
     GPIO_SET = set;
     GPIO_CLEAR = clear;
@@ -230,21 +234,21 @@ public:
 
         if (memcmp(cmd, "ge", 2) == 0) {
             if (sread(fd, cmd, 6) != 1)
-                return 1;
+                return false;
             memcpy(result, xvcInfo, strlen(xvcInfo));
             if (write(fd, result, strlen(xvcInfo)) != strlen(xvcInfo)) {
                 ESP_LOGE(TAG, "write");
-                return 1;
+                return false;
             }
             ESP_LOGD(TAG, "%u : Received command: 'getinfo'\n", (int)time(NULL));
             return true;
         } else if (memcmp(cmd, "se", 2) == 0) {
             if (sread(fd, cmd, 9) != 1)
-                return 1;
+                return false;
             memcpy(result, cmd + 5, 4);
             if (write(fd, result, 4) != 4) {
                 ESP_LOGE(TAG, "write");
-                return 1;
+                return false;
             }
             ESP_LOGD(TAG, "%u : Received command: 'settck'\n", (int)time(NULL));
             return true;
@@ -373,7 +377,7 @@ void loop()
     // 如果 WiFi 断开，自动重连
     if (state == AppState::APConnected && !WiFi.isConnected()) {
         state = AppState::WaitingAPConnection;
-        server.release();
+        server.reset();
         Serial.println("WiFi Lost, attempting reconnect...");
     }
 
